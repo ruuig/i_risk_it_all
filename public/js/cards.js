@@ -4,7 +4,7 @@
 window.DEDICATORIA = {
   clave: '1111',                         // se escribe como 11:11
   para: 'para ti',                       // arriba de la clave. Ej: 'para Sofía'
-  pregunta: '¿a qué hora se piden los deseos?',
+  pregunta: '¿Qué fecha es hoy?',
   claveMal: 'casi… inténtalo otra vez',
   idiomaInicial: 'en',                   // 'en' o 'es'
   ajuste: 0,                             // si la letra va adelantada pon 0.15; si va atrasada, -0.15 (segundos)
