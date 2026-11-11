@@ -130,13 +130,16 @@
       .then(r => { if (!r.ok) throw new Error('audio'); return r.arrayBuffer(); })
       .then(ab => new Promise((ok, no) => { const p = ctx.decodeAudioData(ab, ok, no); if (p && p.catch) p.catch(() => {}); }))
       .then(b => { buf[k] = b; });
-    Promise.all([load('en'), load('es')]).then(() => { w.ready = true; }).catch(() => {});
+    w.failed = false; w.onready = null;
+    Promise.all([load('en'), load('es')])
+      .then(() => { w.ready = true; if (w.onready) w.onready(); })
+      .catch(() => { w.failed = true; if (w.onready) w.onready(); });
     return w;
   })();
 
   const P = {
     lang: CFG.idiomaInicial === 'es' ? 'es' : 'en',
-    want: false, dual: true, ended: false, guard: 0, comp: 0.06, expect: null,
+    want: false, dual: true, ended: false, guard: 0, comp: 0.06, expect: null, pending: null,
     get el() { return A[this.lang]; },
     get other() { return A[this.lang === 'en' ? 'es' : 'en']; },
     time() { return W && W.on ? W.time() : (this.el.currentTime || 0); },
@@ -188,10 +191,14 @@
       if (l === this.lang) return;
       if (W) W.unlock();
       if (this.wa()) {
+        this.pending = null;
         this.lang = l; W.mix(l);
         if (this.want && W.time() >= W.len(l) - 0.05) W.onend();   // esa versión ya había terminado
         return;
       }
+      // Safari / iPhone sin el audio listo todavía: cambiar de pista ahí lo manda al final.
+      // Se espera a que termine de cargar (unos segundos) y entonces cambia en el mismo segundo.
+      if (W && !W.failed) { this.pending = l; return; }
       const from = this.el, to = A[l], t = from.currentTime || 0;
       const live = this.want && this.dual && !to.paused && !to.ended && Math.abs(to.currentTime - t) < 0.15;
       if (!live) this.put(to, t + (this.want ? 0.04 : 0));
@@ -988,14 +995,25 @@
     pp.setAttribute('aria-label', P.want ? 'Pausar' : 'Reproducir');
   }
   function paintLang() {
-    app.dataset.lang = P.lang;
-    langBtns.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.lang === P.lang)));
+    const shown = P.pending || P.lang;   // el botón se mueve al instante aunque la canción espere a cargar
+    app.dataset.lang = shown;
+    langBtns.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.lang === shown)));
     credit.textContent = P.lang === 'en' ? 'Risk It All' : 'Lo Arriesgo Todo';
     subKey = '\u0000';
   }
   paintLang();
 
-  langBtns.forEach(b => b.addEventListener('click', () => { P.setLang(b.dataset.lang); paintLang(); }));
+  langBtns.forEach(b => b.addEventListener('click', () => {
+    if (P.pending && b.dataset.lang === P.lang) P.pending = null;   // se arrepintió antes de que cargara
+    else P.setLang(b.dataset.lang);
+    paintLang();
+  }));
+  if (W) W.onready = () => {
+    const l = P.pending;
+    P.pending = null;
+    if (l && l !== P.lang) P.setLang(l);
+    paintLang();
+  };
   pp.addEventListener('click', () => { if (P.want) P.pause(); else P.start(); });
   tap.addEventListener('click', () => { tap.classList.remove('show'); P.start(); });
   $('#again').addEventListener('click', () => { P.seek(0); P.ended = false; P.start(); });
@@ -1120,7 +1138,7 @@
 
       // si la canción aún está cargando, avisamos con suavidad
       if (t !== stallT) { stallT = t; stallAt = now; }
-      wait.classList.toggle('show', P.want && !P.ended && now - stallAt > 1400);
+      wait.classList.toggle('show', (P.want && !P.ended && now - stallAt > 1400) || !!P.pending);
     }
     const live = app.dataset.phase === 'play' && P.want;
     const target = live ? pulseAt(P.time()) : 0.3;
