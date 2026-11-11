@@ -297,7 +297,10 @@ img { display: block; -webkit-user-drag: none; }
 .card.p-side .pose { inset: auto; left: 50%; top: 50%; width: var(--ch, 100%); height: var(--cw, 100%); transform: translate(-50%, -50%) rotate(-90deg); }
 
 /* cámara: entra con golpe y sigue acercándose despacio */
-.cam { position: relative; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; will-change: transform; }
+.cam { position: relative; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+/* capas propias solo para la frase que está en pantalla (las demás no gastan memoria ni batería) */
+.card.live .cam, .card.gone .cam { will-change: transform; }
+.card.live .w > .in, .card.gone .w > .in { will-change: transform, opacity; }
 .card.al .cam { align-items: flex-start; }
 .card.ar .cam { align-items: flex-end; }
 .card.vb .cam { padding-top: calc(var(--u) * 44); }
@@ -322,7 +325,7 @@ img { display: block; -webkit-user-drag: none; }
 .row.has-x:first-child { margin-top: -3em; }
 
 .w { display: inline-block; position: relative; }
-.w > .in { display: inline-block; opacity: 0; will-change: transform, opacity; }
+.w > .in { display: inline-block; opacity: 0; }
 
 /* pequeña */
 .w.s { font-family: var(--sans); font-weight: 400; font-size: 4.6em; letter-spacing: .18em; text-transform: lowercase; margin-right: -.18em; }

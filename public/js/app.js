@@ -7,6 +7,10 @@
   const CFG = window.DEDICATORIA, T = window.TIMING, C = window.CARDS, S = window.SCENES;
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  // Safari y todos los navegadores del iPhone (mismo motor): ahí el audio y el temblor de los dibujos van por otro camino
+  const UA = navigator.userAgent;
+  const WK = 'GestureEvent' in window || (/AppleWebKit/.test(UA) && !/Chrome|Chromium|Edg/.test(UA));
+  const IOS = /iP(hone|ad|od)/.test(UA) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
   /* ------------------------------------------------------------------
      Textos
@@ -25,18 +29,143 @@
   const A = { en: $('#a-en'), es: $('#a-es') };
   const tap = $('#tapstart');
 
+  /* Safari / iPhone: las dos versiones se decodifican completas y suenan con un solo reloj (Web Audio).
+     Cambiar de idioma es solo subir una y bajar la otra: no hay que buscar el segundo ni sincronizar
+     dos reproductores, que es justo lo que Safari hace mal. Si aún no terminan de cargar, o algo falla,
+     se usa el reproductor de siempre (más abajo) y este toma el mando en el siguiente toque. */
+  const W = (() => {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!WK || !AC || !window.fetch) return null;
+    let ctx;
+    try { ctx = new AC(); } catch (e) { return null; }
+    const buf = {}, gain = {}, src = {};
+    let gen = 0, pos = 0, t0 = 0, keep = null;
+    for (const k in A) { gain[k] = ctx.createGain(); gain[k].connect(ctx.destination); }
+
+    // iPhone viejo: sin esto, el interruptor de silencio calla la canción. Un audio mudo en bucle la pasa al canal de música.
+    if (IOS && !navigator.audioSession) {
+      try {
+        // medio segundo de silencio en WAV (8 kHz, 8 bits, mono)
+        const n = 4000, b = new Uint8Array(44 + n), v = new DataView(b.buffer);
+        const tag = (o, s) => { for (let i = 0; i < 4; i++) b[o + i] = s.charCodeAt(i); };
+        tag(0, 'RIFF'); v.setUint32(4, 36 + n, true); tag(8, 'WAVE'); tag(12, 'fmt ');
+        v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+        v.setUint32(24, 8000, true); v.setUint32(28, 8000, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true);
+        tag(36, 'data'); v.setUint32(40, n, true);
+        b.fill(128, 44);
+        keep = new Audio(URL.createObjectURL(new Blob([b], { type: 'audio/wav' })));
+        keep.loop = true; keep.setAttribute('playsinline', '');
+      } catch (e) { keep = null; }
+    }
+    const hum = () => { if (keep && keep.paused) { const q = keep.play(); if (q && q.catch) q.catch(() => {}); } };
+
+    const w = {
+      ready: false, on: false, playing: false, lang: 'en', onend: null, onstop: null,
+      get running() { return ctx.state === 'running'; },
+      dur() { return buf.en.duration; },
+      len(l) { return buf[l].duration; },
+      // siempre dentro de un toque: así Safari deja sonar
+      unlock() {
+        try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+        if (ctx.state !== 'running') { try { const p = ctx.resume(); if (p && p.catch) p.catch(() => {}); } catch (e) {} }
+        if (w.on && w.playing) hum();
+      },
+      // toma el mando en el segundo t (los reproductores normales se callan)
+      take(t) { A.en.pause(); A.es.pause(); w.on = true; pos = Math.max(0, t || 0); },
+      time() {
+        if (!w.playing) return pos;
+        const lat = Math.min(0.25, (ctx.baseLatency || 0) + (ctx.outputLatency || 0));
+        return clamp(pos + ctx.currentTime - t0 - lat, pos, buf.en.duration);
+      },
+      stop() {
+        gen++;
+        for (const k in src) {
+          try { src[k].onended = null; src[k].stop(); } catch (e) {}
+          try { src[k].disconnect(); } catch (e) {}
+          delete src[k];
+        }
+      },
+      play() {
+        w.stop();
+        const g = gen, when = ctx.currentTime + 0.04;
+        for (const k in gain) {
+          const s = ctx.createBufferSource();
+          s.buffer = buf[k]; s.connect(gain[k]);
+          s.onended = () => { if (g === gen && w.playing && k === w.lang && w.onend) w.onend(); };
+          s.start(when, clamp(pos, 0, buf[k].duration - 0.2));
+          src[k] = s;
+        }
+        t0 = when; w.playing = true;
+        hum();
+      },
+      pause() {
+        if (w.playing) pos = w.time();
+        w.stop(); w.playing = false;
+        if (keep) keep.pause();
+      },
+      seek(t) { pos = Math.max(0, t); if (w.playing) w.play(); },
+      // sube una versión y baja la otra (30 ms, para que no truene)
+      mix(l) {
+        w.lang = l;
+        const now = ctx.currentTime;
+        for (const k in gain) {
+          const p = gain[k].gain, v = k === l ? 1 : 0;
+          try {
+            p.cancelScheduledValues(0);
+            if (w.playing) { p.setValueAtTime(p.value, now); p.linearRampToValueAtTime(v, now + 0.03); }
+            else p.setValueAtTime(v, now);
+          } catch (e) { p.value = v; }
+        }
+      },
+    };
+
+    // una llamada, Siri o cambiar de app cortan el audio: si no vuelve solo, queda en pausa
+    ctx.onstatechange = () => {
+      if (!w.on || !w.playing || ctx.state === 'running') return;
+      try { const p = ctx.resume(); if (p && p.catch) p.catch(() => {}); } catch (e) {}
+      setTimeout(() => { if (w.on && w.playing && ctx.state !== 'running' && w.onstop) w.onstop(); }, 1200);
+    };
+
+    const load = k => fetch(A[k].getAttribute('src'))
+      .then(r => { if (!r.ok) throw new Error('audio'); return r.arrayBuffer(); })
+      .then(ab => new Promise((ok, no) => { const p = ctx.decodeAudioData(ab, ok, no); if (p && p.catch) p.catch(() => {}); }))
+      .then(b => { buf[k] = b; });
+    Promise.all([load('en'), load('es')]).then(() => { w.ready = true; }).catch(() => {});
+    return w;
+  })();
+
   const P = {
     lang: CFG.idiomaInicial === 'es' ? 'es' : 'en',
-    want: false, dual: true, ended: false, guard: 0, comp: 0.06,
+    want: false, dual: true, ended: false, guard: 0, comp: 0.06, expect: null,
     get el() { return A[this.lang]; },
     get other() { return A[this.lang === 'en' ? 'es' : 'en']; },
-    time() { return this.el.currentTime || 0; },
-    dur() { const d = A.en.duration; return isFinite(d) && d > 0 ? d : 205.4; },
+    time() { return W && W.on ? W.time() : (this.el.currentTime || 0); },
+    dur() { if (W && W.ready) return W.dur(); const d = A.en.duration; return isFinite(d) && d > 0 ? d : 205.4; },
     limit(el, t) { const d = el.duration; return Math.max(0, Math.min(t, (isFinite(d) && d > 0 ? d : 1e9) - 0.2)); },
 
+    // ¿manda el audio decodificado (Safari / iPhone)? Si ya está listo, toma el mando en el segundo t
+    wa(t) {
+      if (!W || !(W.on || W.ready)) return false;
+      if (!W.on) {
+        W.take(t === undefined ? this.time() : t);
+        this.expect = null;
+        W.mix(this.lang);
+        if (this.want) W.play();
+      }
+      return true;
+    },
+
     start() {
+      if (W) W.unlock();
       if (this.ended) { this.seek(0); }
       this.want = true; this.ended = false; this.guard = performance.now() + 3000;
+      if (this.wa()) {
+        if (!W.playing) { W.mix(this.lang); W.play(); }
+        // si Safari no dejó arrancar el sonido, pedimos un toque
+        setTimeout(() => { if (W.on && W.playing && this.want && !W.running) { this.pause(); tap.classList.add('show'); } }, 1500);
+        paintUI();
+        return;
+      }
       const a = this.el, b = this.other;
       a.muted = false; b.muted = true;
       const p = a.play();
@@ -48,26 +177,58 @@
       }
       paintUI();
     },
-    pause() { this.want = false; A.en.pause(); A.es.pause(); paintUI(); },
+    pause() { this.want = false; if (W && W.on) W.pause(); A.en.pause(); A.es.pause(); paintUI(); },
     seek(t) {
       t = clamp(t, 0, this.dur() - 0.25);
+      this.ended = false; this.expect = null;
+      if (this.wa(t)) { W.seek(t); return; }
       for (const k in A) { try { A[k].currentTime = this.limit(A[k], t); } catch (e) {} }
-      this.ended = false;
     },
     setLang(l) {
       if (l === this.lang) return;
-      const from = this.el, to = A[l], t = from.currentTime;
+      if (W) W.unlock();
+      if (this.wa()) {
+        this.lang = l; W.mix(l);
+        if (this.want && W.time() >= W.len(l) - 0.05) W.onend();   // esa versión ya había terminado
+        return;
+      }
+      const from = this.el, to = A[l], t = from.currentTime || 0;
       const live = this.want && this.dual && !to.paused && !to.ended && Math.abs(to.currentTime - t) < 0.15;
-      if (!live) { try { to.currentTime = this.limit(to, t + (this.want ? 0.04 : 0)); } catch (e) {} }
+      if (!live) this.put(to, t + (this.want ? 0.04 : 0));
       this.lang = l;
       to.muted = false; from.muted = true;
+      // durante unos segundos vigilamos que la pista nueva no salte (algunos teléfonos la mandan al final o al inicio)
+      this.expect = { t, at: performance.now() };
       if (this.want) {
+        this.guard = performance.now() + 1500;   // si el teléfono pausa la pista nueva, la volvemos a poner
         const p = to.play(); if (p && p.catch) p.catch(() => {});
         if (!this.dual) from.pause();
       }
     },
+    // poner una pista en un segundo, aunque todavía no haya cargado
+    put(el, t) {
+      t = this.limit(el, t);
+      try { el.currentTime = t; } catch (e) {}
+      if (el.readyState < 1) el.addEventListener('loadedmetadata', () => { try { el.currentTime = this.limit(el, t); } catch (e) {} }, { once: true });
+    },
+    // tiempo en el que debería ir la canción justo después de cambiar de idioma (o null)
+    expected() {
+      const e = this.expect;
+      if (!e) return null;
+      const dt = (performance.now() - e.at) / 1000;
+      if (dt > 4) { this.expect = null; return null; }
+      return e.t + (this.want ? dt : 0);
+    },
+    // si después del cambio la pista brincó lejos, la regresamos
+    check() {
+      if (W && W.on) return;
+      const want = this.expected(), el = this.el;
+      if (want === null || el.seeking) return;
+      const now = el.currentTime || 0;
+      if (now > want + 3 || (now < 1 && want > 3)) this.put(el, want);
+    },
     sync() {
-      if (!this.want || !this.dual) return;
+      if (!this.want || !this.dual || (W && W.on)) return;
       const a = this.el, b = this.other;
       if (a.paused || b.ended || a.seeking || b.seeking) return;
       if (b.paused) {
@@ -84,9 +245,15 @@
   };
   setInterval(() => P.sync(), 700);
 
+  if (W) {
+    W.onend = () => { P.ended = true; P.want = false; W.pause(); paintUI(); };
+    W.onstop = () => { if (P.want) { P.want = false; W.pause(); paintUI(); } };
+  }
+
   for (const k in A) {
     const el = A[k];
     el.addEventListener('pause', () => {
+      if (W && W.on) return;
       if (el !== P.el || !P.want || el.ended) return;
       if (P.dual && performance.now() < P.guard) {
         // el teléfono solo deja sonar una pista a la vez: seguimos con una sola
@@ -96,7 +263,15 @@
       } else { P.want = false; P.other.pause(); paintUI(); }
     });
     el.addEventListener('ended', () => {
+      if (W && W.on) return;
       if (el !== P.el) return;
+      // un "terminó" falso justo después de cambiar de idioma: seguimos donde íbamos
+      const want = P.expected();
+      if (want !== null && want < P.dur() - 3) {
+        P.put(el, want);
+        if (P.want) { const p = el.play(); if (p && p.catch) p.catch(() => {}); }
+        return;
+      }
       P.ended = true; P.want = false; P.other.pause(); paintUI();
     });
   }
@@ -113,13 +288,110 @@
   const cardsEl = $('#cards');
   const lists = { en: [], es: [], common: [] };
 
+  /* Temblor de los dibujos sin filtro (Safari / iPhone). El filtro #boil mueve cada punto del dibujo
+     según un ruido suave; Safari lo recalcula por software en cada cuadro y eso frena la página y
+     calienta el teléfono. Aquí se calcula ese mismo movimiento una sola vez: cada trazo queda guardado
+     en 8 versiones ya deformadas y al sonar la canción solo se alternan. */
+  const wobble = (() => {
+    const NS = 'http://www.w3.org/2000/svg', FRAMES = 8, STEP = 3, ARGS = { M: 2, L: 2, H: 1, V: 1, C: 6, S: 4, Q: 4, T: 2, A: 7, Z: 0 };
+    const cache = {};
+    const hash = (i, j, s) => {
+      let h = Math.imul(i, 0x27d4eb2d) ^ Math.imul(j, 0x165667b1) ^ Math.imul(s, 0x9e3779b1);
+      h = Math.imul(h ^ h >>> 15, 0x85ebca6b); h = Math.imul(h ^ h >>> 13, 0xc2b2ae35);
+      return ((h ^ h >>> 16) >>> 0) / 4294967296;
+    };
+    // ruido de Perlin en 2D, como el de feTurbulence
+    function perlin(x, y, s) {
+      const xi = Math.floor(x), yi = Math.floor(y), fx = x - xi, fy = y - yi;
+      const dot = (i, j) => { const a = hash(xi + i, yi + j, s) * 6.2832; return Math.cos(a) * (fx - i) + Math.sin(a) * (fy - j); };
+      const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+      const a = dot(0, 0), b = dot(1, 0), c = dot(0, 1), d = dot(1, 1);
+      return a + sx * (b - a) + sy * ((c + sx * (d - c)) - (a + sx * (b - a)));
+    }
+    // igual que baseFrequency .04, numOctaves 2 y scale 5 del filtro
+    const push = (x, y, s) => 2.5 * (perlin(x * 0.04, y * 0.04, s) + perlin(x * 0.08, y * 0.08, s + 101) / 2);
+
+    // separa un trazo en tramos sueltos, y cada tramo en sus comandos
+    function split(d) {
+      const subs = [];
+      let cur = null;
+      d.replace(/([a-zA-Z])([^a-zA-Z]*)/g, (_, c, rest) => {
+        const nums = rest.match(/-?\d*\.?\d+/g) || [], n = ARGS[c.toUpperCase()];
+        if (c === 'M' || !cur) { cur = []; subs.push(cur); }
+        if (!n) { cur.push(c); return ''; }
+        for (let i = 0; i < nums.length; i += n) cur.push((i && c === 'M' ? 'L' : i && c === 'm' ? 'l' : c) + nums.slice(i, i + n).join(' '));
+        return '';
+      });
+      return subs;
+    }
+
+    return name => {
+      if (cache[name]) return cache[name];
+      const out = cache[name] = [];
+      try {
+        const svg = document.createElementNS(NS, 'svg'), probe = document.createElementNS(NS, 'path');
+        svg.innerHTML = window.DOODLES[name].html;
+        Array.from(svg.querySelectorAll('path')).forEach(path => {
+          // el ruido vive en las coordenadas del dibujo completo: m lleva del trazo al dibujo
+          let m = null;
+          for (let n = path; n && n !== svg; n = n.parentNode) {
+            const tl = n.transform && n.transform.baseVal;
+            if (tl && tl.numberOfItems) { const c = tl.consolidate().matrix; m = m ? c.multiply(m) : c; }
+          }
+          const det = m ? m.a * m.d - m.b * m.c : 1;
+          const frames = [];
+          for (let f = 0; f < FRAMES; f++) frames.push('');
+          split(path.getAttribute('d')).forEach(cmds => {
+            const closed = /z/i.test(cmds[cmds.length - 1]);
+            // puntos a lo largo del tramo, sin saltarse ninguna esquina
+            const pts = [];
+            let from = 0;
+            probe.setAttribute('d', cmds.join(''));
+            const whole = probe.getTotalLength();
+            pts.push(probe.getPointAtLength(0));
+            const marks = [];
+            for (let i = 1; i < cmds.length; i++) {
+              probe.setAttribute('d', cmds.slice(0, i + 1).join(''));
+              marks.push(i === cmds.length - 1 ? whole : probe.getTotalLength());
+            }
+            probe.setAttribute('d', cmds.join(''));
+            marks.forEach(to => {
+              const n = Math.max(1, Math.ceil((to - from) / STEP));
+              for (let j = 1; j <= n; j++) pts.push(probe.getPointAtLength(from + (to - from) * j / n));
+              from = to;
+            });
+            for (let f = 0; f < FRAMES; f++) {
+              let d = '';
+              pts.forEach((p, i) => {
+                const X = m ? m.a * p.x + m.c * p.y + m.e : p.x, Y = m ? m.b * p.x + m.d * p.y + m.f : p.y;
+                const dx = push(X, Y, f * 2 + 1), dy = push(X, Y, f * 2 + 2);
+                const lx = m ? (m.d * dx - m.c * dy) / det : dx, ly = m ? (m.a * dy - m.b * dx) / det : dy;
+                d += (i ? 'L' : 'M') + (p.x + lx).toFixed(2) + ' ' + (p.y + ly).toFixed(2);
+              });
+              frames[f] += d + (closed ? 'Z' : '');
+            }
+          });
+          out.push(frames);
+        });
+      } catch (e) { out.length = 0; }
+      return out;
+    };
+  })();
+  const wobs = [];   // dibujos con temblor precalculado
+
   function makeArt(name) {
     const D = window.DOODLES && window.DOODLES[name];
     if (!D) return null;
     const wrap = document.createElement('div');
     wrap.className = 'art art-' + name;
-    wrap.innerHTML = '<svg viewBox="' + D.vb + '" aria-hidden="true"><g filter="url(#boil)">' + D.html + '</g></svg>';
+    const frames = WK ? wobble(name) : [];
+    wrap.innerHTML = '<svg viewBox="' + D.vb + '" aria-hidden="true"><g' + (frames.length ? '' : ' filter="url(#boil)"') + '>' + D.html + '</g></svg>';
     $$('.ln', wrap).forEach((p, i) => { p.setAttribute('pathLength', '1'); p.style.setProperty('--k', i); });
+    if (frames.length) {
+      const paths = $$('path', wrap).map((el, i) => ({ el, f: frames[i] })).filter(p => p.f);
+      paths.forEach(p => p.el.setAttribute('d', p.f[0]));
+      wrap.wob = paths;
+    }
     return wrap;
   }
 
@@ -166,18 +438,22 @@
       });
       cam.appendChild(row); rows.push(row);
     });
+    let wob = null;
     if (spec.art) {
       const parts = spec.art.split(':'), art = makeArt(parts[0]);
       if (art) {
         if (parts[1] === 'top') cam.insertBefore(art, cam.firstChild);
         else { if (parts[1] === 'behind') art.classList.add('behind'); cam.appendChild(art); }
+        wob = art.wob || null;
       }
     }
     if (words && k !== words.length) console.warn('faltan palabras', lang, spec.l, k, words.length);
     const start = words ? words[0][1] : spec.at;
     const end = words ? T[lang][spec.l[spec.l.length - 1]].end : spec.at + spec.dur;
     cardsEl.appendChild(el);
-    return { el, cam, rows, base, ws, start, end, exit: end, st: '', last: -1, fixed: !words, bg, pose: spec.pose || '', hero: /\bhero\b/.test(spec.c) };
+    const card = { el, cam, rows, base, ws, start, end, exit: end, st: '', last: -1, fixed: !words, bg, pose: spec.pose || '', hero: /\bhero\b/.test(spec.c), wob };
+    if (wob) wobs.push(card);
+    return card;
   }
 
   function buildAll() {
@@ -258,7 +534,8 @@
     for (let n = 0; n < list.length; n++) {
       const c = list[n];
       if (!active) { setCard(c, ''); continue; }
-      const st = t < c.start - 0.12 ? '' : (t < c.exit ? 'live' : 'gone');
+      // una frase que ya salió vuelve a su estado de reposo: así sus animaciones no siguen corriendo escondidas
+      const st = t < c.start - 0.12 || t > c.exit + 1.5 ? '' : (t < c.exit ? 'live' : 'gone');
       setCard(c, st);
       if (st && t < c.exit + 0.42) cur = c;
       if (st !== 'live') continue;
@@ -290,6 +567,7 @@
     ['inset(0 0 100% 0)', 'inset(0 0 0 0)'],
   ];
   let pIdx = 0, curBg = '', wipeN = 0;
+  let covered = false;   // un fondo de color tapa todo el cielo: no hace falta dibujar las estrellas
   const stopAnims = el => { if (el.getAnimations) el.getAnimations().forEach(a => a.cancel()); };
 
   function setPanel(name) {
@@ -305,9 +583,10 @@
       if (inc.animate && !reduce) {
         const w = WIPES[wipeN++ % WIPES.length];
         const a = inc.animate([{ clipPath: w[0] }, { clipPath: w[1] }], { duration: 400, easing: 'cubic-bezier(.65, 0, .2, 1)' });
-        a.onfinish = () => { if (panels[pIdx] === inc) out.style.opacity = 0; };
-      } else out.style.opacity = 0;
+        a.onfinish = () => { if (panels[pIdx] === inc) { out.style.opacity = 0; covered = !!curBg; } };
+      } else { out.style.opacity = 0; covered = true; }
     } else {
+      covered = false;
       const act = panels[pIdx];
       panels[pIdx ^ 1].style.opacity = 0;
       if (act.animate && !reduce) {
@@ -363,7 +642,15 @@
     let n = 0;
     setInterval(() => {
       if (document.hidden || app.dataset.phase !== 'play') return;
-      turb.setAttribute('seed', String(1 + (n++ % 8)));
+      n++;
+      // con el temblor precalculado solo se cambia de versión el dibujo que está en pantalla
+      if (WK) {
+        for (let i = 0; i < wobs.length; i++) {
+          const c = wobs[i];
+          if (c.st === 'live') for (let j = 0; j < c.wob.length; j++) c.wob[j].el.setAttribute('d', c.wob[j].f[n % 8]);
+        }
+      }
+      if (!WK || !wobs.length) turb.setAttribute('seed', String(1 + (n % 8)));
     }, 140);
   })();
 
@@ -489,26 +776,34 @@
       return { x: Math.random() * W, y, z, vy: (20 + Math.random() * 22) * (0.6 + z * 0.7), amp: 8 + Math.random() * 18, fr: 0.25 + Math.random() * 0.5, ph: Math.random() * TAU };
     }
 
-    function draw(now, f, beat) {
+    let fgUsed = true;
+    function draw(now, f, beat, hide) {
       const dt = Math.min(0.05, (now - last) / 1000 || 0); last = now;
       const sec = now / 1000;
-      bg.clearRect(0, 0, W, H); fg.clearRect(0, 0, W, H);
+      // el lienzo de delante solo se toca cuando tiene algo (o hay que borrar lo del cuadro anterior)
+      const busy = !!(f.bokeh || f.petals || f.lanterns || f.fire || f.glints || bokeh.length || petals.length || lanterns.length || embers.length || glints.length);
+      if (busy || fgUsed) fg.clearRect(0, 0, W, H);
+      fgUsed = busy;
 
       /* ---- detrás: estrellas ---- */
       const target = f.fire ? 0.35 : f.bokeh ? 0.3 : f.sea ? 0.45 : f.petals ? 0.6 : f.bright ? 1.5 : 0.95;
       gain += (target - gain) * Math.min(1, dt * 1.3);
       const g2 = gain * (0.7 + 0.55 * beat);
+      // con un fondo de color encima el cielo no se ve: las estrellas siguen su camino pero no se dibujan
+      if (hide) shots.length = 0; else bg.clearRect(0, 0, W, H);
       bg.fillStyle = '#fff6ea';
       for (let i = 0; i < stars.length; i++) {
-        const s = stars[i], tw = 0.55 + 0.45 * Math.sin(sec * s.s + s.p);
+        const s = stars[i];
         s.x += s.d * dt; if (s.x > W + 6) s.x = -6;
+        if (hide) continue;
+        const tw = 0.55 + 0.45 * Math.sin(sec * s.s + s.p);
         bg.globalAlpha = Math.min(1, s.a * tw * g2);
         if (s.big) spark(bg, s.x, s.y, 2.2 + 3.4 * tw);
         else { bg.beginPath(); bg.arc(s.x, s.y, s.r, 0, TAU); bg.fill(); }
       }
       if (!reduce && !(f.fire || f.bokeh || f.sea)) {
         nextShot -= dt;
-        if (nextShot <= 0) { shoot(); nextShot = 3.5 + Math.random() * 5.5; }
+        if (nextShot <= 0) { if (!hide) shoot(); nextShot = 3.5 + Math.random() * 5.5; }
       }
       for (let i = shots.length - 1; i >= 0; i--) {
         const s = shots[i]; s.life += dt; s.x += s.vx * dt; s.y += s.vy * dt;
@@ -776,10 +1071,12 @@
   /* ------------------------------------------------------------------
      Bucle
      ------------------------------------------------------------------ */
-  let prevT = 0, stallT = -1, stallAt = 0, ariaAt = 0;
+  let prevT = 0, stallT = -1, stallAt = 0, ariaAt = 0, seekW = 0, knobX = '';
+  addEventListener('resize', () => { seekW = 0; knobX = ''; });
 
-  // el fondo respira con la intensidad de la música
+  // el fondo respira con la intensidad de la música (solo si las nubes de color están a la vista)
   const PU = window.PULSE, aura = $('#aura');
+  const auraOn = getComputedStyle(aura).display !== 'none';
   let beat = 0.3;
   function pulseAt(t) {
     if (!PU) return 0.4;
@@ -789,7 +1086,8 @@
 
   function frame(now) {
     if (app.dataset.phase === 'play') {
-      const t = P.time();
+      P.check();
+      const t = P.expect && Math.abs(P.time() - P.expected()) > 3 ? P.expected() : P.time();
 
       renderScene(t);
       const tl = t - (CFG.ajuste || 0);
@@ -809,9 +1107,15 @@
       }
       prevT = t;
 
+      // la barra solo se repinta cuando el punto se mueve al menos una décima de pixel
       const p = clamp(t / P.dur(), 0, 1);
-      fill.style.transform = 'scaleX(' + p.toFixed(4) + ')';
-      knob.style.transform = 'translateX(' + (p * seek.clientWidth).toFixed(1) + 'px)';
+      if (!seekW) seekW = seek.clientWidth;
+      const kx = (p * seekW).toFixed(1);
+      if (kx !== knobX) {
+        knobX = kx;
+        fill.style.transform = 'scaleX(' + p.toFixed(4) + ')';
+        knob.style.transform = 'translateX(' + kx + 'px)';
+      }
       if (now - ariaAt > 1000) { ariaAt = now; seek.setAttribute('aria-valuenow', String(Math.round(p * 100))); }
 
       // si la canción aún está cargando, avisamos con suavidad
@@ -821,11 +1125,11 @@
     const live = app.dataset.phase === 'play' && P.want;
     const target = live ? pulseAt(P.time()) : 0.3;
     beat += (target - beat) * (target > beat ? 0.3 : 0.05);
-    if (!reduce) {
+    if (!reduce && auraOn) {
       aura.style.opacity = (0.5 + 0.5 * beat).toFixed(3);
       aura.style.transform = 'scale(' + (1 + 0.08 * beat).toFixed(4) + ')';
     }
-    fx.draw(now, flags, beat);
+    fx.draw(now, flags, beat, covered);
     requestAnimationFrame(frame);
   }
 
@@ -851,5 +1155,5 @@
   requestAnimationFrame(frame);
 
   // acceso desde la consola para pruebas
-  window.__risk = { P, fx, lists, flags };
+  window.__risk = { P, W, fx, lists, flags };
 })();
