@@ -943,6 +943,45 @@
   let tone = 'night';
   const flashEl = $('.flash');
 
+  /* Las franjas del navegador (arriba y abajo, sobre todo en iPhone) muestran el color de fondo de la
+     página, no la escena. Aquí ese color sigue a lo que se ve en la orilla de la pantalla. */
+  const hex = s => [1, 3, 5].map(i => parseInt(s.substr(i, 2), 16));
+  const mix = (c, over, a) => c.map((v, i) => Math.round(v + (over[i] - v) * a));
+  const css = c => '#' + c.map(v => v.toString(16).padStart(2, '0')).join('');
+  const SCRIM = [12, 8, 22];
+  const TONE_EDGE = {   // [arriba, abajo] de cada cielo
+    night: ['#09070f', '#110b1b'], dusk: ['#17102b', '#b9788c'], ember: ['#0d0608', '#26090d'], wine: ['#3a1127', '#5a1c3a'],
+    rosy: ['#25102f', '#dc8c9a'], sunset: ['#171238', '#f6a96c'], dawn: ['#110b22', '#45275a'],
+  };
+  const themeMeta = document.querySelector('meta[name="theme-color"]');
+  let edgeKey = '';
+  function paintEdge() {
+    const tn = TONE_EDGE[tone] || TONE_EDGE.night;
+    let top, bot;
+    if (curBg) top = bot = BG[curBg].c;   // fondo de color: cubre todo
+    else {
+      let b = hex(tn[1]);
+      if (flags.sea) b = [23, 14, 46];                       // agua y ola oscura
+      else if (flags.fire) b = mix([168, 31, 60], [13, 6, 8], 0.9);
+      else if (flags.mount) b = [21, 14, 37];
+      top = css(mix(hex(tn[0]), SCRIM, 0.35));
+      bot = css(mix(mix(b, SCRIM, 0.62), [10, 6, 18], 0.07));
+    }
+    const key = top + bot;
+    if (key === edgeKey) return;
+    edgeKey = key;
+    document.documentElement.style.backgroundColor = bot;
+    document.body.style.backgroundColor = bot;
+    if (themeMeta) themeMeta.setAttribute('content', top);
+  }
+
+  // pantalla completa al entrar (Android y tabletas; el iPhone no lo permite a las páginas)
+  function goFull() {
+    const el = document.documentElement;
+    if (!document.fullscreenEnabled || document.fullscreenElement || !matchMedia('(pointer: coarse)').matches) return;
+    try { const p = el.requestFullscreen({ navigationUI: 'hide' }); if (p && p.catch) p.catch(() => {}); } catch (e) {}
+  }
+
   function renderScene(t) {
     for (const name in S.flags) {
       let on = S.flags[name].some(r => t >= r[0] && t < r[1]);
@@ -1065,6 +1104,7 @@
     locked = true;
     if (entry === String(CFG.clave)) {
       P.start();                       // dentro del toque: así el teléfono deja sonar la música
+      goFull();
       app.dataset.phase = 'play';
       wake();
     } else {
@@ -1148,6 +1188,7 @@
       aura.style.transform = 'scale(' + (1 + 0.08 * beat).toFixed(4) + ')';
     }
     fx.draw(now, flags, beat, covered);
+    paintEdge();
     requestAnimationFrame(frame);
   }
 
