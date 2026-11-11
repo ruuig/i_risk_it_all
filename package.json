@@ -1,0 +1,7 @@
+{
+  "name": "once-once",
+  "private": true,
+  "scripts": {
+    "start": "npx --yes serve public -l 3000"
+  }
+}

@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#120c1f">
+<meta name="robots" content="noindex, nofollow">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>11:11</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23120c1f'/%3E%3Cpath d='M16 5c.9 6.2 4.8 10.100 11 11-6.200.900-10.100 4.800-11 11-.9-6.200-4.800-10.100-11-11 6.200-.9 10.100-4.800 11-11z' fill='%23fbefe2'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant:ital,wght@0,300;0,400;0,500;1,300;1,400;1,500;1,600&family=Jost:wght@300;400&family=Mrs+Saint+Delafield&family=Anton&family=Bodoni+Moda:opsz,wght@6..96,800&display=swap" rel="stylesheet">
+<link rel="preload" as="image" href="assets/img/selfie.jpg">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app" data-phase="gate" data-tone="night" data-lang="en">
+
+  <!-- cielo -->
+  <div class="sky" aria-hidden="true">
+    <div class="tone tone-dusk"></div>
+    <div class="tone tone-wine"></div>
+    <div class="tone tone-ember"></div>
+    <div class="tone tone-rosy"></div>
+    <div class="tone tone-sunset"></div>
+    <div class="tone tone-dawn"></div>
+    <div class="aura" id="aura"><i></i><i></i><i></i></div>
+  </div>
+  <canvas id="fx" aria-hidden="true"></canvas>
+
+  <div class="scenery" aria-hidden="true">
+    <div class="sun"><i></i></div>
+    <div class="moon"><i></i></div>
+    <div class="clouds"><i class="c1"></i><i class="c2"></i><i class="c3"></i></div>
+    <div class="emberglow"></div>
+    <div class="flames" id="flames"></div>
+    <svg class="mount" viewBox="0 0 400 120" preserveAspectRatio="none">
+      <path class="m-back" d="M0 120V78l34-26 26 18 44-46 38 34 30-22 46 40 40-52 44 44 34-20 30 26 34-22V120z"/>
+      <path class="m-front" d="M0 120V96l40-22 34 16 50-34 44 30 36-18 52 30 48-38 46 32 50-18V120z"/>
+    </svg>
+    <div class="sea">
+      <div class="water"></div>
+      <div class="shimmer"></div>
+      <svg class="wave w1" viewBox="0 0 800 100" preserveAspectRatio="none"><path d="M0 40c50-22 100-22 150 0s100 22 150 0 100-22 150 0 100 22 150 0 100-22 150 0 50 11 50 11V100H0z"/></svg>
+      <svg class="wave w2" viewBox="0 0 800 100" preserveAspectRatio="none"><path d="M0 46c50-18 100-18 150 0s100 18 150 0 100-18 150 0 100 18 150 0 100-18 150 0 50 9 50 9V100H0z"/></svg>
+      <svg class="wave w3" viewBox="0 0 800 100" preserveAspectRatio="none"><path d="M0 52c50-14 100-14 150 0s100 14 150 0 100-14 150 0 100 14 150 0 100-14 150 0 50 7 50 7V100H0z"/></svg>
+    </div>
+    <div class="boat" id="boat"></div>
+  </div>
+
+  <div class="scrim" aria-hidden="true"></div>
+  <div class="panels" aria-hidden="true">
+    <div class="panel" id="panelA"></div>
+    <div class="panel" id="panelB"></div>
+  </div>
+  <canvas id="fx2" aria-hidden="true"></canvas>
+  <div class="grain" aria-hidden="true"></div>
+  <div class="flash" aria-hidden="true"></div>
+
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <filter id="boil" x="-20%" y="-20%" width="140%" height="140%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.04" numOctaves="2" seed="1" result="n"/>
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="5" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+  </svg>
+
+  <main class="stage">
+
+    <!-- entrada -->
+    <section class="gate" id="gate" aria-label="Entrada">
+      <p class="gate-for" id="gate-for">para ti</p>
+      <p class="gate-ask" id="gate-ask">¿a qué hora se piden los deseos?</p>
+      <div class="code" id="code" role="img" aria-label="Clave de cuatro números">
+        <span class="slot"></span><span class="slot"></span>
+        <span class="colon">:</span>
+        <span class="slot"></span><span class="slot"></span>
+      </div>
+      <div class="pad" id="pad">
+        <button type="button" data-k="1">1</button>
+        <button type="button" data-k="2">2</button>
+        <button type="button" data-k="3">3</button>
+        <button type="button" data-k="4">4</button>
+        <button type="button" data-k="5">5</button>
+        <button type="button" data-k="6">6</button>
+        <button type="button" data-k="7">7</button>
+        <button type="button" data-k="8">8</button>
+        <button type="button" data-k="9">9</button>
+        <span></span>
+        <button type="button" data-k="0">0</button>
+        <button type="button" data-k="del" class="del" aria-label="Borrar">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h10a1.500 1.500 0 0 1 1.500 1.500v9A1.500 1.500 0 0 1 19 18H9l-5.500-6z M12 9.500l4.500 5 M16.500 9.500l-4.500 5" fill="none" stroke="currentColor" stroke-width="1.200" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+    </section>
+
+    <!-- letra animada -->
+    <div class="cards" id="cards" aria-live="off"></div>
+
+    <!-- fotos -->
+    <figure class="solo" id="solo" aria-hidden="true"><img src="assets/img/selfie.jpg" alt="" draggable="false"></figure>
+    <div class="deck" id="deck" aria-hidden="true"></div>
+
+    <!-- el otro idioma -->
+    <p class="sub" id="sub"></p>
+
+    <!-- final -->
+    <section class="finale" id="finale">
+      <div class="arch"><img src="assets/img/selfie.jpg" alt="Nosotros" draggable="false"></div>
+      <p class="fin-title" id="fin-title"></p>
+      <p class="fin-note" id="fin-note"></p>
+      <p class="fin-sign" id="fin-sign"></p>
+      <button type="button" class="again" id="again">escuchar otra vez</button>
+    </section>
+
+    <p class="wait" id="wait">un momento…</p>
+  </main>
+
+  <!-- controles -->
+  <header class="top">
+    <div class="lang" id="lang" role="group" aria-label="Idioma de la canción">
+      <button type="button" data-lang="en" aria-pressed="true">English</button>
+      <button type="button" data-lang="es" aria-pressed="false">Español</button>
+      <i class="thumb" aria-hidden="true"></i>
+    </div>
+  </header>
+
+  <footer class="bar">
+    <button type="button" class="pp" id="pp" aria-label="Pausar">
+      <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.500 6v12M15.500 6v12" fill="none" stroke="currentColor" stroke-width="1.600" stroke-linecap="round"/></svg>
+      <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6.500v11l9-5.500z" fill="currentColor"/></svg>
+    </button>
+    <div class="track">
+      <p class="credit"><span id="credit">Risk It All</span>, Bruno Mars</p>
+      <div class="seek" id="seek" role="slider" aria-label="Avance de la canción" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" tabindex="0">
+        <div class="line"><i id="fill"></i></div>
+        <b id="knob"></b>
+      </div>
+    </div>
+  </footer>
+
+  <button type="button" class="tapstart" id="tapstart">toca para empezar</button>
+
+  <audio id="a-en" src="assets/audio/en.mp3" preload="auto" playsinline></audio>
+  <audio id="a-es" src="assets/audio/es.mp3" preload="auto" playsinline></audio>
+</div>
+
+<script src="js/timing.js"></script>
+<script src="js/pulse.js"></script>
+<script src="js/doodles.js"></script>
+<script src="js/cards.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

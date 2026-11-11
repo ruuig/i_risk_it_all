@@ -1,0 +1,6 @@
+# originales y herramientas: no hacen falta para la página
+Letra/
+tools/
+node_modules/
+.DS_Store
+Thumbs.db
